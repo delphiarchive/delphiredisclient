@@ -57,6 +57,9 @@ type
 
   TRedisGeoUnit = (Meters, Kilometers, Miles, Feet);
   TRedisSorting = (None, Asc, Desc);
+  TRedisAggregate = (Sum, Min, Max);
+
+  TRedisScoreMode = (WithScores, WithoutScores);
 
   TRedisClientBase = class abstract(TInterfacedObject)
   protected
@@ -165,10 +168,13 @@ type
     // sets
     function SADD(const aKey, aValue: TBytes): Integer; overload;
     function SADD(const aKey, aValue: string): Integer; overload;
+    function SDIFF(const aKeys: array of string): TRedisArray;
     function SREM(const aKey, aValue: TBytes): Integer; overload;
     function SREM(const aKey, aValue: string): Integer; overload;
     function SMEMBERS(const aKey: string): TRedisArray;
     function SCARD(const aKey: string): Integer;
+    function SUNION(const aKeys: array of string): TRedisArray;
+    function SUNIONSTORE(const aDestination: String; const aKeys: array of string): Integer;
 
     // ordered sets
     function ZADD(const aKey: string; const AScore: Int64;
@@ -178,12 +184,20 @@ type
     function ZCOUNT(const aKey: string; const AMin, AMax: Int64): Integer;
     function ZRANK(const aKey: string; const AMember: string;
       out ARank: Int64): boolean;
-    function ZRANGE(const aKey: string; const aStart, AStop: Int64)
-      : TRedisArray;
-    function ZRANGEWithScore(const aKey: string; const aStart, AStop: Int64)
-      : TRedisArray;
+    function ZRANGE(const aKey: string; const aStart, AStop: Int64;
+      const aScores: TRedisScoreMode = TRedisScoreMode.WithoutScores): TRedisArray;
+    function ZREVRANGE(const aKey: string; const aStart, AStop: Int64;
+      const aScoreMode: TRedisScoreMode = TRedisScoreMode.WithoutScores): TRedisArray;
+//    function ZRANGEWithScore(const aKey: string; const aStart, AStop: Int64)
+//      : TRedisArray;
     function ZINCRBY(const aKey: string; const AIncrement: Int64;
       const AMember: string): string;
+    function ZUNIONSTORE(const aDestination: string;
+      const aNumKeys: NativeInt; const aKeys: array of string): Int64; overload;
+    function ZUNIONSTORE(const aDestination: string;
+      const aNumKeys: NativeInt; const aKeys: array of string; const aWeights: array of Integer): Int64; overload;
+    function ZUNIONSTORE(const aDestination: string;
+      const aNumKeys: NativeInt; const aKeys: array of string; const aWeights: array of Integer; const aAggregate: TRedisAggregate): Int64; overload;
 
     // geo
     /// <summary>

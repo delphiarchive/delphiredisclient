@@ -55,6 +55,9 @@ type
     function ParseSimpleStringResponseAsByteNULL: TRedisBytes;
     function ParseSimpleStringResponseAsStringNULL: TRedisString;
   protected
+    procedure BuildZUNIONSTOREDefault(const aDestination: string;
+      const aNumKeys: NativeInt; const aKeys: array of string);
+
     function GetGEORADIUSCommand(const Key: string;
       const Longitude, Latitude: Extended; const Radius: Extended;
       const &Unit: TRedisGeoUnit; const Sorting: TRedisSorting;
@@ -170,10 +173,13 @@ type
     // sets
     function SADD(const aKey, aValue: TBytes): Integer; overload;
     function SADD(const aKey, aValue: string): Integer; overload;
+    function SDIFF(const aKeys: array of string): TRedisArray;
     function SREM(const aKey, aValue: TBytes): Integer; overload;
     function SREM(const aKey, aValue: string): Integer; overload;
     function SMEMBERS(const aKey: string): TRedisArray;
     function SCARD(const aKey: string): Integer;
+    function SUNION(const aKeys: array of string): TRedisArray;
+    function SUNIONSTORE(const aDestination: string; const aKeys: array of string): Integer;
 
     // ordered sets
     function ZADD(const aKey: string; const AScore: Int64;
@@ -183,13 +189,21 @@ type
     function ZCOUNT(const aKey: string; const AMin, AMax: Int64): Integer;
     function ZRANK(const aKey: string; const AMember: string;
       out ARank: Int64): boolean;
-    function ZRANGE(const aKey: string; const AStart, AStop: Int64)
+    function ZRANGE(const aKey: string; const aStart, AStop: Int64;
+      const aScoreMode: TRedisScoreMode = TRedisScoreMode.WithoutScores): TRedisArray;
+    function ZREVRANGE(const aKey: string; const aStart, AStop: Int64;
+      const aScoreMode: TRedisScoreMode = TRedisScoreMode.WithoutScores)
       : TRedisArray;
-    function ZRANGEWithScore(const aKey: string; const AStart, AStop: Int64)
-      : TRedisArray;
+    // function ZRANGEWithScore(const aKey: string; const AStart, AStop: Int64)
+    // : TRedisArray;
     function ZINCRBY(const aKey: string; const AIncrement: Int64;
       const AMember: string): string;
-
+    function ZUNIONSTORE(const aDestination: string;
+      const aNumKeys: NativeInt; const aKeys: array of string): Int64; overload;
+    function ZUNIONSTORE(const aDestination: string;
+      const aNumKeys: NativeInt; const aKeys: array of string; const aWeights: array of Integer): Int64; overload;
+    function ZUNIONSTORE(const aDestination: string;
+      const aNumKeys: NativeInt; const aKeys: array of string; const aWeights: array of Integer; const aAggregate: TRedisAggregate): Int64; overload;
     // geo REDIS 3.2
     function GEOADD(const Key: string; const Latitude, Longitude: Extended;
       Member: string): Integer;
@@ -258,6 +272,7 @@ uses Redis.NetLib.Factory, System.Generics.Collections;
 const
   REDIS_GEO_UNIT_STRING: array [TRedisGeoUnit.Meters .. TRedisGeoUnit.Feet]
     of string = ('m', 'km', 'mi', 'ft');
+  REDIS_AGGREGATE: array [TRedisAggregate.Sum .. TRedisAggregate.Max] of string = ('SUM', 'MIN', 'MAX');
 
   { TRedisClient }
 
@@ -277,6 +292,13 @@ function TRedisClient.SCARD(const aKey: string): Integer;
 begin
   FNextCMD := GetCmdList('SCARD').Add(aKey);
   Result := ExecuteWithIntegerResult(FNextCMD);
+end;
+
+function TRedisClient.SDIFF(const aKeys: array of string): TRedisArray;
+begin
+  FNextCMD := GetCmdList('SDIFF').AddRange(aKeys);
+  FTCPLibInstance.SendCmd(FNextCMD);
+  Result := ParseArrayResponseNULL;
 end;
 
 procedure TRedisClient.SELECT(const ADBIndex: Integer);
@@ -1261,6 +1283,19 @@ begin
   end;
 end;
 
+procedure TRedisClient.BuildZUNIONSTOREDefault(const aDestination: string;
+  const aNumKeys: NativeInt; const aKeys: array of string);
+var
+  lKey: string;
+begin
+  FNextCMD := GetCmdList('ZUNIONSTORE');
+  FNextCMD.Add(aDestination).Add(aNumKeys);
+  for lKey in aKeys do
+  begin
+    FNextCMD.Add(lKey);
+  end;
+end;
+
 function TRedisClient.RPOP(const aListKey: string): TRedisString;
 begin
   Result := POPCommands('RPOP', aListKey);
@@ -1440,6 +1475,21 @@ begin
   end;
 end;
 
+function TRedisClient.SUNION(const aKeys: array of string): TRedisArray;
+begin
+  FNextCMD := GetCmdList('SUNION').AddRange(aKeys);
+  FTCPLibInstance.SendCmd(FNextCMD);
+  Result := ParseArrayResponseNULL;
+end;
+
+function TRedisClient.SUNIONSTORE(const aDestination: string;
+  const aKeys: array of string): Integer;
+begin
+  FNextCMD := GetCmdList('SUNIONSTORE').Add(aDestination).AddRange(aKeys);
+  FTCPLibInstance.SendCmd(FNextCMD);
+  Result := ParseIntegerResponse(FValidResponse);
+end;
+
 function TRedisClient.Tokenize(const ARedisCommand: string): TArray<string>;
 var
   C: Char;
@@ -1572,21 +1622,24 @@ begin
   Result := ExecuteWithStringResult(FNextCMD);
 end;
 
-function TRedisClient.ZRANGE(const aKey: string; const AStart, AStop: Int64)
-  : TRedisArray;
+function TRedisClient.ZRANGE(const aKey: string; const AStart, AStop: Int64; const aScoreMode: TRedisScoreMode): TRedisArray;
 begin
   FNextCMD := GetCmdList('ZRANGE');
   FNextCMD.Add(aKey).Add(AStart.ToString).Add(AStop.ToString);
+  if aScoreMode = TRedisScoreMode.WithScores then
+  begin
+    FNextCMD.Add('WITHSCORES');
+  end;
   Result := ExecuteAndGetArrayNULL(FNextCMD);
 end;
 
-function TRedisClient.ZRANGEWithScore(const aKey: string;
-  const AStart, AStop: Int64): TRedisArray;
-begin
-  FNextCMD := GetCmdList('ZRANGE');
-  FNextCMD.Add(aKey).Add(AStart.ToString).Add(AStop.ToString).Add('WITHSCORES');
-  Result := ExecuteAndGetArrayNULL(FNextCMD);
-end;
+// function TRedisClient.ZRANGEWithScore(const aKey: string;
+// const AStart, AStop: Int64): TRedisArray;
+// begin
+// FNextCMD := GetCmdList('ZRANGE');
+// FNextCMD.Add(aKey).Add(AStart.ToString).Add(AStop.ToString).Add('WITHSCORES');
+// Result := ExecuteAndGetArrayNULL(FNextCMD);
+// end;
 
 function TRedisClient.ZRANK(const aKey: string; const AMember: string;
   out ARank: Int64): boolean;
@@ -1601,6 +1654,56 @@ function TRedisClient.ZREM(const aKey, AMember: string): Integer;
 begin
   FNextCMD := GetCmdList('ZREM');
   FNextCMD.Add(aKey).Add(AMember);
+  Result := ExecuteWithIntegerResult(FNextCMD);
+end;
+
+function TRedisClient.ZREVRANGE(const aKey: string; const aStart,
+  AStop: Int64; const aScoreMode: TRedisScoreMode): TRedisArray;
+begin
+  FNextCMD := GetCmdList('ZREVRANGE');
+  FNextCMD.Add(aKey).Add(AStart.ToString).Add(AStop.ToString);
+  if aScoreMode = TRedisScoreMode.WithScores then
+  begin
+    FNextCMD.Add('WITHSCORES');
+  end;
+  Result := ExecuteAndGetArrayNULL(FNextCMD);
+end;
+
+function TRedisClient.ZUNIONSTORE(const aDestination: string;
+  const aNumKeys: NativeInt; const aKeys: array of string;
+  const aWeights: array of Integer; const aAggregate: TRedisAggregate): Int64;
+var
+  lWeight: Integer;
+begin
+  BuildZUNIONSTOREDefault(aDestination, aNumKeys, aKeys);
+  FNextCMD.Add('WEIGHTS');
+  for lWeight in aWeights do
+  begin
+    FNextCMD.Add(lWeight);
+  end;
+  FNextCMD.AddRange(['AGGREGATE', REDIS_AGGREGATE[aAggregate]]);
+  Result := ExecuteWithIntegerResult(FNextCMD);
+end;
+
+function TRedisClient.ZUNIONSTORE(const aDestination: string;
+  const aNumKeys: NativeInt; const aKeys: array of string;
+  const aWeights: array of Integer): Int64;
+var
+  lWeight: NativeInt;
+begin
+  BuildZUNIONSTOREDefault(aDestination, aNumKeys, aKeys);
+  FNextCMD.Add('WEIGHTS');
+  for lWeight in aWeights do
+  begin
+    FNextCMD.Add(lWeight);
+  end;
+  Result := ExecuteWithIntegerResult(FNextCMD);
+end;
+
+function TRedisClient.ZUNIONSTORE(const aDestination: string;
+  const aNumKeys: NativeInt; const aKeys: array of string): Int64;
+begin
+  BuildZUNIONSTOREDefault(aDestination, aNumKeys, aKeys);
   Result := ExecuteWithIntegerResult(FNextCMD);
 end;
 
